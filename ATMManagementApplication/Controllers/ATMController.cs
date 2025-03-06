@@ -12,18 +12,20 @@ namespace ATMManagementApplication.Controllers
     public class ATMController : Controller
     {
         private readonly ATMContext _context;
+
         public ATMController(ATMContext context)
         {
             _context = context;
         }
 
         [HttpGet("Balance/{customerId}")]
-        public IActionResult GetBalance(int customerId)
+        public async Task<IActionResult> GetBalance(int customerId)
         {
-            var customer = _context.Customers.Find(customerId);
+            var customer = await _context.Customers.FindAsync(customerId);
             if (customer == null) return NotFound("Customer not found");
 
-            return Ok(new { Balance = customer.Balance });
+            var balance = Math.Round(customer.Balance, 2);
+            return Ok(new { Balance = balance });
         }
 
         [HttpPost("withdraw")]
@@ -34,20 +36,10 @@ namespace ATMManagementApplication.Controllers
 
             if (customer.Balance < request.Amount) return BadRequest("Insufficient balance");
 
-            // Thực hiện rút tiền
             customer.Balance -= request.Amount;
 
-            // Tạo đối tượng giao dịch mới
-            var transaction = new Transaction
-            {
-                CustomerId = request.CustomerId,
-                Amount = request.Amount,
-                Timestamp = DateTime.Now,
-                IsSuccessful = true,
-                Description = "rut tien thanh cong"
-            };
+            var transaction = CreateTransaction(request.CustomerId, request.Amount, "Successful withdrawal");
 
-            // Thêm giao dịch vào cơ sở dữ liệu
             _context.Transactions.Add(transaction);
             _context.SaveChanges();
 
@@ -60,44 +52,27 @@ namespace ATMManagementApplication.Controllers
             var customer = _context.Customers.Find(request.CustomerId);
             if (customer == null) return NotFound("Customer not found");
 
-            // Thực hiện gửi tiền
             customer.Balance += request.Amount;
 
-            // Tạo đối tượng giao dịch mới
-            var transaction = new Transaction
-            {
-                CustomerId = request.CustomerId,
-                Amount = request.Amount,
-                Timestamp = DateTime.Now,
-                IsSuccessful = true,
-                Description = "gui tien thanh cong"
-            };
+            var transaction = CreateTransaction(request.CustomerId, request.Amount, "Successful deposit");
 
-            // Thêm giao dịch vào cơ sở dữ liệu
             _context.Transactions.Add(transaction);
             _context.SaveChanges();
 
             return Ok(new { Message = "Deposit successful", Balance = customer.Balance });
         }
 
-
-
-        // lich su giao  dich
         [HttpGet("transaction-history/{customerId}")]
-        public IActionResult Transactionhistory(int customerId)
+        public IActionResult GetTransactionHistory(int customerId)
         {
-            var customer = _context.Customers.Find(customerId);
-            if (customer == null) return NotFound("customer not found");
-
             var transactions = _context.Transactions
                 .Where(t => t.CustomerId == customerId)
-                .OrderByDescending(t => t.Timestamp).ToList();
+                .OrderByDescending(t => t.Timestamp)
+                .ToList();
 
             return Ok(transactions);
         }
 
-
-        // chuyen tien giua cac tai khoan
         [HttpPost("transfer")]
         public IActionResult Transfer([FromBody] TransferRequest request)
         {
@@ -107,52 +82,35 @@ namespace ATMManagementApplication.Controllers
             if (sender == null || receiver == null) return NotFound("Sender or Receiver not found");
             if (sender.Balance < request.Amount) return BadRequest("Insufficient balance");
 
-            // thuc hien chuyen tien
             sender.Balance -= request.Amount;
             receiver.Balance += request.Amount;
 
-            // tao giao dich nguoi gui
-            var senderTransaction = new Transaction
-            {
-                CustomerId = request.SenderId,
-                Amount = -request.Amount,
-                Timestamp = DateTime.Now,
-                IsSuccessful = true,
-                Description = "Transfer to " + receiver.Name
-
-            };
-            _context.Transactions.Add(senderTransaction);
-
-            // tao giao dich nguoi gui
-            var receiverTransaction = new Transaction
-            {
-                CustomerId = request.ReceiverId,
-                Amount = request.Amount,
-                Timestamp = DateTime.Now,
-                IsSuccessful = true,
-                Description = "Transfer from " + sender.Name
-
-            };
-            _context.Transactions.Add(receiverTransaction);
+            _context.Transactions.Add(CreateTransaction(request.SenderId, -request.Amount, $"Transfer to {receiver.Name}"));
+            _context.Transactions.Add(CreateTransaction(request.ReceiverId, request.Amount, $"Transfer from {sender.Name}"));
 
             _context.SaveChanges();
 
-            // Gửi email cho người gửi
-            SendEmail(sender.Email, "Transfer Confirmation", $"You have successfully transferred {request.Amount} to {receiver.Name}.");
-
-            // Gửi email cho người nhận
+            SendEmail(sender.Email, "Transfer Confirmation", $"You have transferred {request.Amount} to {receiver.Name}.");
             SendEmail(receiver.Email, "Money Received", $"You have received {request.Amount} from {sender.Name}.");
 
-
             return Ok(new { Message = "Transfer successful", SenderBalance = sender.Balance, ReceiverBalance = receiver.Balance });
-
         }
 
+        private Transaction CreateTransaction(int customerId, decimal amount, string description)
+        {
+            return new Transaction
+            {
+                CustomerId = customerId,
+                Amount = amount,
+                Timestamp = DateTime.Now,
+                IsSuccessful = true,
+                Description = description
+            };
+        }
 
-        // gui email giao dich
         private void SendEmail(string toEmail, string subject, string body)
         {
-            var smtpClient = new SmtpClient("smtp.gmail.com")
+            using var smtpClient = new SmtpClient("smtp.gmail.com")
             {
                 Port = 587,
                 Credentials = new NetworkCredential("hongphuc0835@gmail.com", "joia vkwu vppg pdvu"),
@@ -164,14 +122,11 @@ namespace ATMManagementApplication.Controllers
                 From = new MailAddress("hongphuc0835@gmail.com"),
                 Subject = subject,
                 Body = body,
-                IsBodyHtml = true,
+                IsBodyHtml = true
             };
             mailMessage.To.Add(toEmail);
-
             smtpClient.Send(mailMessage);
         }
-
-
     }
 
     public class WithdrawRequest
